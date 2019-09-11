@@ -38,16 +38,21 @@ pub struct NeuralNet {
     weights: Vec<Vec<f64>>,
 }
 
+#[derive(Clone, Debug)]
 pub struct DCostNeuralNet {
     pub layer_sizes: Vec<usize>,
     pub biais: Vec<Vec<f64>>,
     pub weights: Vec<Vec<f64>>,
+    pub first_layer_dcost: Vec<f64>,
 }
 
 impl DCostNeuralNet {
     pub fn new(layers: &[usize]) -> Self {
         let mut biais = Vec::new();
         let mut weights = Vec::new();
+        let mut first_layer_dcost = Vec::new();
+
+        first_layer_dcost.resize(layers[0], 0.);
 
         for i in 0..layers.len() - 1 {
             let mut layer_biais = Vec::new();
@@ -64,6 +69,7 @@ impl DCostNeuralNet {
             layer_sizes: Vec::from(layers),
             biais,
             weights,
+            first_layer_dcost,
         }
     }
 }
@@ -104,6 +110,9 @@ impl AverageDCost for Vec<DCostNeuralNet> {
                 for j in 0..average.weights[i].len() {
                     average.weights[i][j] += d_cost_neural_net.weights[i][j] / self.len() as f64;
                 }
+            }
+            for i in 0..average.first_layer_dcost.len() {
+                average.first_layer_dcost[i] += d_cost_neural_net.first_layer_dcost[i];
             }
         }
         Ok(average)
@@ -207,21 +216,28 @@ impl NeuralNet {
         }
     }
 
-    pub fn backprop(
-        &mut self,
-        input: &[f64],
-        output_goal: &[f64],
-    ) -> Result<DCostNeuralNet, Error> {
+    pub fn backprop(&self, input: &[f64], output_goal: &[f64]) -> Result<DCostNeuralNet, Error> {
         let layer_values = self.compute(input)?;
-        let mut d_cost_neural_net = DCostNeuralNet::new(&self.layer_sizes);
 
-        let mut d_co_prec: Vec<f64> = layer_values
+        let d_co_prec: Vec<f64> = layer_values
             .last()
             .unwrap()
             .iter()
             .enumerate()
             .map(|(i, x)| cost_function_derivative(*x, output_goal[i]))
             .collect();
+
+        self.backprop_from_dcost(&layer_values, &d_co_prec)
+    }
+
+    pub fn backprop_from_dcost(
+        &self,
+        layer_values: &Vec<Vec<f64>>,
+        d_co_prec: &Vec<f64>,
+    ) -> Result<DCostNeuralNet, Error> {
+        let mut d_co_prec: Vec<f64> = d_co_prec.clone();
+
+        let mut d_cost_neural_net = DCostNeuralNet::new(&self.layer_sizes);
 
         for k in 1..self.layer_sizes.len() {
             let layer_nb = self.layer_sizes.len() - 1 - k;
@@ -246,19 +262,18 @@ impl NeuralNet {
                     &self.biais[layer_nb],
                     &self.weights[layer_nb],
                 );
-                if layer_nb > 0 {
-                    Self::backprop_prec_layer(
-                        d_co_prec[i],
-                        i,
-                        &mut new_d_co,
-                        &layer_values[layer_nb],
-                        &self.biais[layer_nb],
-                        &self.weights[layer_nb],
-                    );
-                }
+                Self::backprop_prec_layer(
+                    d_co_prec[i],
+                    i,
+                    &mut new_d_co,
+                    &layer_values[layer_nb],
+                    &self.biais[layer_nb],
+                    &self.weights[layer_nb],
+                );
             }
             d_co_prec = new_d_co;
         }
+        d_cost_neural_net.first_layer_dcost = d_co_prec;
         Ok(d_cost_neural_net)
     }
 
